@@ -3,12 +3,24 @@ import tkinter as tk
 from database import initialize_database
 from data.demo_voters import load_demo_voters
 
+from services.admin_security import seed_demo_admin_accounts
+
 from gui.login import LoginScreen
 from gui.voter_verification import VoterVerificationScreen
 from gui.biometric import BiometricScreen
 from gui.ballot import BallotScreen
 from gui.result import ResultScreen
-from gui.admin import AdminScreen
+
+from gui.admin_login import AdminLoginScreen
+from gui.admin_face import AdminFaceVerificationScreen
+from gui.admin_2fa import Admin2FAScreen
+
+from gui.admin_dashboards import (
+    BoothDashboard,
+    ZonalDashboard,
+    DeputyDashboard,
+    CentralDashboard,
+)
 
 
 class VeriVoteApp:
@@ -17,9 +29,9 @@ class VeriVoteApp:
 
         self.root = root
 
-        # =========================
+        # =================================================
         # WINDOW
-        # =========================
+        # =================================================
 
         self.root.title(
             "VeriVote - Secure Polling Centre System"
@@ -38,38 +50,56 @@ class VeriVoteApp:
             bg="#F4F7FB"
         )
 
-        # =========================
+        # =================================================
         # SCREEN REFERENCES
-        # =========================
+        # =================================================
 
         self.login_screen = None
+        self.admin_login_screen = None
+        self.admin_face_screen = None
+        self.admin_2fa_screen = None
+
         self.voter_screen = None
         self.biometric_screen = None
         self.ballot_screen = None
         self.result_screen = None
-        self.admin_screen = None
 
-        # =========================
-        # CREATE SCREENS
-        # =========================
+        self.admin_dashboards = {}
+
+        self.current_admin_account = None
+
+        # =================================================
+        # CREATE MAIN LOGIN
+        # =================================================
 
         self.login_screen = LoginScreen(
             root,
-            self.show_voter_verification
+            self.show_voter_verification,
+            self.show_admin_login
         )
+
+        # =================================================
+        # CREATE ADMIN LOGIN
+        # =================================================
+
+        self.admin_login_screen = AdminLoginScreen(
+            root,
+            self.handle_admin_password_success,
+            self.show_main_login
+        )
+
+        # =================================================
+        # CREATE VOTER VERIFICATION
+        # =================================================
 
         self.voter_screen = VoterVerificationScreen(
             root,
             self.show_biometric
         )
 
-        self.admin_screen = AdminScreen(
-            root
-        )
-
-        # =========================
+        # =================================================
         # START
-        # =========================
+        # =================================================
 
         self.login_screen.show()
 
@@ -81,11 +111,14 @@ class VeriVoteApp:
 
         screens = [
             self.login_screen,
+            self.admin_login_screen,
+            self.admin_face_screen,
+            self.admin_2fa_screen,
             self.voter_screen,
-            self.admin_screen,
             self.biometric_screen,
             self.ballot_screen,
-            self.result_screen
+            self.result_screen,
+            *self.admin_dashboards.values(),
         ]
 
         for screen in screens:
@@ -94,8 +127,29 @@ class VeriVoteApp:
 
                 try:
                     screen.hide()
+
                 except Exception:
                     pass
+
+    # =====================================================
+    # MAIN LOGIN
+    # =====================================================
+
+    def show_main_login(self):
+
+        self.hide_all()
+
+        self.login_screen.show()
+
+    # =====================================================
+    # ADMIN LOGIN
+    # =====================================================
+
+    def show_admin_login(self):
+
+        self.hide_all()
+
+        self.admin_login_screen.show()
 
     # =====================================================
     # VOTER VERIFICATION
@@ -116,7 +170,7 @@ class VeriVoteApp:
         voter_data = {
             "identity": voter_result["identity"],
             "name": voter_result["name"],
-            "constituency": voter_result["constituency"]
+            "constituency": voter_result["constituency"],
         }
 
         self.biometric_screen = BiometricScreen(
@@ -172,37 +226,158 @@ class VeriVoteApp:
         self.voter_screen.show()
 
     # =====================================================
-    # ADMIN
+    # ADMIN PASSWORD SUCCESS
     # =====================================================
 
-    def show_admin(self):
+    def handle_admin_password_success(
+        self,
+        account
+    ):
+
+        self.current_admin_account = account
+
+        # -------------------------------------------------
+        # CENTRAL → FACE VERIFICATION
+        # -------------------------------------------------
+
+        if account["role"] == "CENTRAL":
+
+            self.admin_face_screen = (
+                AdminFaceVerificationScreen(
+                    self.root,
+                    account,
+                    self.handle_central_face_success,
+                    self.show_admin_login
+                )
+            )
+
+            self.hide_all()
+
+            self.admin_face_screen.show()
+
+            return
+
+        # -------------------------------------------------
+        # OTHER LEVELS → DIRECT DASHBOARD
+        # -------------------------------------------------
+
+        self.show_admin_dashboard(
+            account
+        )
+
+    # =====================================================
+    # CENTRAL FACE SUCCESS
+    # =====================================================
+
+    def handle_central_face_success(
+        self,
+        account
+    ):
+
+        self.current_admin_account = account
+
+        # -------------------------------------------------
+        # CENTRAL → 2FA
+        # -------------------------------------------------
+
+        self.admin_2fa_screen = Admin2FAScreen(
+            self.root,
+            account,
+            self.show_admin_dashboard,
+            self.show_admin_login
+        )
 
         self.hide_all()
 
-        self.admin_screen.show()
+        self.admin_2fa_screen.show()
 
+    # =====================================================
+    # SHOW CORRECT ADMIN DASHBOARD
+    # =====================================================
+
+    def show_admin_dashboard(
+        self,
+        account
+    ):
+
+        self.current_admin_account = account
+
+        role = account["role"]
+
+        dashboard_class = {
+
+            "BOOTH": BoothDashboard,
+
+            "ZONAL": ZonalDashboard,
+
+            "DEPUTY": DeputyDashboard,
+
+            "CENTRAL": CentralDashboard,
+
+        }.get(role)
+
+        if dashboard_class is None:
+
+            raise ValueError(
+                f"Unsupported admin role: {role}"
+            )
+
+        self.admin_dashboards[role] = dashboard_class(
+            self.root,
+            account,
+            self.logout_admin
+        )
+
+        self.hide_all()
+
+        self.admin_dashboards[role].show()
+
+    # =====================================================
+    # ADMIN LOGOUT
+    # =====================================================
+
+    def logout_admin(self):
+
+        self.current_admin_account = None
+
+        self.hide_all()
+
+        self.admin_login_screen.show()
+
+
+# =========================================================
+# MAIN
+# =========================================================
 
 def main():
 
-    # =========================
+    # =====================================================
     # DATABASE
-    # =========================
+    # =====================================================
 
     initialize_database()
 
-    # =========================
+    # =====================================================
+    # ADMIN ACCOUNTS
+    # =====================================================
+
+    seed_demo_admin_accounts()
+
+    # =====================================================
     # DEMO VOTERS
-    # =========================
+    # =====================================================
 
     load_demo_voters()
 
-    # =========================
+    # =====================================================
     # TKINTER
-    # =========================
+    # =====================================================
 
     root = tk.Tk()
 
-    app = VeriVoteApp(root)
+    VeriVoteApp(
+        root
+    )
 
     root.mainloop()
 

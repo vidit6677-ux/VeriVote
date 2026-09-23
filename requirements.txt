@@ -1,3 +1,4 @@
-qrcode[pil]
 opencv-contrib-python
 twilio
+pyotp
+cryptography

@@ -6,10 +6,16 @@ from config import DEMO_CENTRE_ID
 
 class LoginScreen:
 
-    def __init__(self, root, on_success):
+    def __init__(
+        self,
+        root,
+        on_success,
+        on_admin_portal=None
+    ):
 
         self.root = root
         self.on_success = on_success
+        self.on_admin_portal = on_admin_portal
 
         self.bg = "#F4F7FB"
         self.primary = "#1557A6"
@@ -24,16 +30,20 @@ class LoginScreen:
             bg=self.bg
         )
 
-        # =========================
+        # =================================================
         # HEADER
-        # =========================
+        # =================================================
 
         header = tk.Frame(
             self.frame,
             bg=self.primary,
             height=82
         )
-        header.pack(fill="x")
+
+        header.pack(
+            fill="x"
+        )
+
         header.pack_propagate(False)
 
         tk.Label(
@@ -42,7 +52,11 @@ class LoginScreen:
             font=("Arial", 25, "bold"),
             fg="white",
             bg=self.primary
-        ).pack(side="left", padx=35, pady=22)
+        ).pack(
+            side="left",
+            padx=35,
+            pady=22
+        )
 
         tk.Label(
             header,
@@ -50,20 +64,28 @@ class LoginScreen:
             font=("Arial", 10, "bold"),
             fg="#DCEAFF",
             bg=self.primary
-        ).pack(side="right", padx=35)
+        ).pack(
+            side="right",
+            padx=35
+        )
 
-        # =========================
-        # CENTER CARD
-        # =========================
+        # =================================================
+        # MAIN AREA
+        # =================================================
 
         outer = tk.Frame(
             self.frame,
             bg=self.bg
         )
+
         outer.pack(
             fill="both",
             expand=True
         )
+
+        # =================================================
+        # LOGIN CARD
+        # =================================================
 
         card = tk.Frame(
             outer,
@@ -76,17 +98,18 @@ class LoginScreen:
             relx=0.5,
             rely=0.48,
             anchor="center",
-            width=470,
-            height=440
+            width=500,
+            height=550
         )
 
-        # Icon
         tk.Label(
             card,
             text="🔐",
             font=("Arial", 38),
             bg=self.white
-        ).pack(pady=(28, 5))
+        ).pack(
+            pady=(22, 4)
+        )
 
         tk.Label(
             card,
@@ -102,54 +125,73 @@ class LoginScreen:
             font=("Arial", 11),
             fg=self.muted,
             bg=self.white
-        ).pack(pady=(5, 25))
+        ).pack(
+            pady=(5, 23)
+        )
 
-        # Centre ID
+        # =================================================
+        # CENTRE ID
+        # =================================================
+
         tk.Label(
             card,
             text="CENTRE ID",
             font=("Arial", 10, "bold"),
             fg=self.text,
             bg=self.white
-        ).pack(anchor="w", padx=55)
+        ).pack(
+            anchor="w",
+            padx=55
+        )
 
         self.centre_entry = tk.Entry(
             card,
-            width=32,
             font=("Arial", 12),
             relief="solid",
             bd=1
         )
+
         self.centre_entry.pack(
             padx=55,
-            pady=(6, 16),
+            pady=(6, 14),
+            fill="x",
             ipady=7
         )
 
-        # Password
+        # =================================================
+        # PASSWORD
+        # =================================================
+
         tk.Label(
             card,
             text="PASSWORD",
             font=("Arial", 10, "bold"),
             fg=self.text,
             bg=self.white
-        ).pack(anchor="w", padx=55)
+        ).pack(
+            anchor="w",
+            padx=55
+        )
 
         self.password_entry = tk.Entry(
             card,
-            width=32,
             show="●",
             font=("Arial", 12),
             relief="solid",
             bd=1
         )
+
         self.password_entry.pack(
             padx=55,
-            pady=(6, 20),
+            pady=(6, 18),
+            fill="x",
             ipady=7
         )
 
-        # Login
+        # =================================================
+        # POLLING CENTRE LOGIN
+        # =================================================
+
         tk.Button(
             card,
             text="LOGIN TO POLLING TERMINAL",
@@ -161,51 +203,116 @@ class LoginScreen:
             font=("Arial", 11, "bold"),
             relief="flat",
             cursor="hand2",
-            bd=0
+            bd=0,
+            pady=10
         ).pack(
             fill="x",
-            padx=55,
-            ipady=10
+            padx=55
         )
 
-        # Demo indicator
+        # =================================================
+        # ADMIN SECURITY PORTAL
+        # =================================================
+
+        if self.on_admin_portal is not None:
+
+            tk.Button(
+                card,
+                text="OPEN ADMIN SECURITY PORTAL",
+                command=self.on_admin_portal,
+                bg=self.white,
+                fg=self.primary,
+                activebackground="#EAF2FF",
+                activeforeground=self.primary_dark,
+                font=("Arial", 10, "bold"),
+                relief="solid",
+                bd=1,
+                cursor="hand2",
+                pady=8
+            ).pack(
+                fill="x",
+                padx=55,
+                pady=(12, 7)
+            )
+
+        # =================================================
+        # DEMO LABEL
+        # =================================================
+
         tk.Label(
             card,
             text="● DEMONSTRATION ENVIRONMENT",
             font=("Arial", 9, "bold"),
             fg="#B45309",
             bg=self.white
-        ).pack(pady=(18, 3))
+        ).pack(
+            pady=(10, 2)
+        )
 
         tk.Label(
             card,
-            text="College project prototype",
+            text=(
+                "College project prototype • "
+                "administrator access is protected separately"
+            ),
             font=("Arial", 9),
             fg=self.muted,
             bg=self.white
         ).pack()
 
+        # =================================================
+        # KEYBOARD
+        # =================================================
+
         self.centre_entry.focus_set()
 
         self.password_entry.bind(
             "<Return>",
-            lambda event: self.login()
+            lambda _event: self.login()
         )
 
+    # =====================================================
+    # SHOW
+    # =====================================================
+
     def show(self):
-        self.frame.pack(fill="both", expand=True)
+
+        self.frame.pack(
+            fill="both",
+            expand=True
+        )
+
+        self.centre_entry.focus_set()
+
+    # =====================================================
+    # HIDE
+    # =====================================================
 
     def hide(self):
+
         self.frame.pack_forget()
+
+    # =====================================================
+    # POLLING CENTRE LOGIN
+    # =====================================================
 
     def login(self):
 
         centre = self.centre_entry.get().strip()
         password = self.password_entry.get().strip()
 
-        if centre == DEMO_CENTRE_ID and password == "admin123":
+        if (
+            centre == DEMO_CENTRE_ID
+            and password == "admin123"
+        ):
+
+            self.password_entry.delete(
+                0,
+                tk.END
+            )
 
             self.hide()
+
             self.on_success()
 
         else:

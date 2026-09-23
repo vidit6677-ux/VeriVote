@@ -1,32 +1,60 @@
 import hashlib
+
 from database import get_connection
 
 
-def get_previous_hash():
-    """
-    Gets the hash of the most recently stored vote.
+# =========================================================
+# GET PREVIOUS HASH
+# =========================================================
+#
+# cursor=None:
+#     Function opens its own database connection.
+#
+# cursor=<existing cursor>:
+#     Function uses the caller's connection/transaction.
+#
+# This second mode is important for Phase 4 because the
+# previous hash and the new vote must be handled using the
+# same database transaction.
+#
+# =========================================================
 
-    If no votes exist, returns GENESIS.
-    """
 
-    connection = get_connection()
-    cursor = connection.cursor()
+def get_previous_hash(cursor=None):
 
-    cursor.execute("""
-        SELECT vote_hash
-        FROM votes
-        ORDER BY vote_id DESC
-        LIMIT 1
-    """)
+    own_connection = cursor is None
 
-    row = cursor.fetchone()
+    if own_connection:
 
-    connection.close()
+        connection = get_connection()
+        cursor = connection.cursor()
+
+    try:
+
+        cursor.execute("""
+            SELECT vote_hash
+            FROM votes
+            ORDER BY vote_id DESC
+            LIMIT 1
+        """)
+
+        row = cursor.fetchone()
+
+    finally:
+
+        if own_connection:
+            connection.close()
 
     if row is None:
+
         return "GENESIS"
 
     return row[0]
+
+
+# =========================================================
+# GENERATE VOTE HASH
+# =========================================================
 
 
 def generate_vote_hash(
@@ -36,6 +64,7 @@ def generate_vote_hash(
     timestamp,
     previous_hash
 ):
+
     """
     Creates a SHA-256 hash for the vote.
 
@@ -56,7 +85,13 @@ def generate_vote_hash(
     ).hexdigest()
 
 
+# =========================================================
+# VERIFY LEDGER INTEGRITY
+# =========================================================
+
+
 def verify_integrity():
+
     """
     Checks whether the stored vote chain is intact.
     """
@@ -64,26 +99,31 @@ def verify_integrity():
     connection = get_connection()
     cursor = connection.cursor()
 
-    cursor.execute("""
-        SELECT
-            vote_id,
-            voter_identity,
-            constituency,
-            candidate,
-            timestamp,
-            previous_hash,
-            vote_hash
-        FROM votes
-        ORDER BY vote_id ASC
-    """)
+    try:
 
-    votes = cursor.fetchall()
+        cursor.execute("""
+            SELECT
+                vote_id,
+                voter_identity,
+                constituency,
+                candidate,
+                timestamp,
+                previous_hash,
+                vote_hash
+            FROM votes
+            ORDER BY vote_id ASC
+        """)
 
-    connection.close()
+        votes = cursor.fetchall()
+
+    finally:
+
+        connection.close()
 
     previous_hash = "GENESIS"
 
     for vote in votes:
+
         (
             vote_id,
             voter_identity,
@@ -94,11 +134,18 @@ def verify_integrity():
             stored_vote_hash
         ) = vote
 
-        # Check previous hash
+        # -------------------------------------------------
+        # CHECK PREVIOUS HASH LINK
+        # -------------------------------------------------
+
         if stored_previous_hash != previous_hash:
+
             return False
 
-        # Recalculate hash
+        # -------------------------------------------------
+        # RECALCULATE CURRENT HASH
+        # -------------------------------------------------
+
         calculated_hash = generate_vote_hash(
             voter_identity,
             constituency,
@@ -107,8 +154,12 @@ def verify_integrity():
             stored_previous_hash
         )
 
-        # Compare hashes
+        # -------------------------------------------------
+        # COMPARE STORED AND CALCULATED HASH
+        # -------------------------------------------------
+
         if calculated_hash != stored_vote_hash:
+
             return False
 
         previous_hash = stored_vote_hash
