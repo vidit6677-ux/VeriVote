@@ -1,361 +1,265 @@
-import pyotp
+import tkinter as tk
+from tkinter import messagebox
 
-from database import (
-    get_admin_account,
-    update_admin_totp_secret,
-    append_admin_audit,
-)
-
-from utils.secret_storage import (
-    encrypt_secret,
-    decrypt_secret,
-)
+from services.admin_2fa import verify_totp
 
 
-# =========================================================
-# TOTP CONFIGURATION
-# =========================================================
-
-TOTP_INTERVAL = 30
-TOTP_DIGITS = 6
-TOTP_ISSUER = "VeriVote"
-
-ENCRYPTED_PREFIX = "enc:v1:"
-
-
-# =========================================================
-# LOAD AND DECRYPT TOTP SECRET
-# =========================================================
-
-def _load_totp_secret(username):
+class Admin2FAScreen:
     """
-    Load the Central administrator's TOTP secret.
+    Central administrator 2FA screen.
 
-    The database may contain either:
-        1. an encrypted secret, or
-        2. an older plaintext secret.
-
-    The function always returns ONLY the decrypted Base32
-    secret to the caller.
+    The screen intentionally never displays the TOTP secret.
+    The Central administrator enters the 6-digit code generated
+    by their authenticator application.
     """
 
-    account = get_admin_account(username)
-
-    if account is None:
-        raise ValueError(
-            "Administrator account not found."
-        )
-
-    stored_value = account.get(
-        "totp_secret",
-        ""
-    )
-
-    if not stored_value:
-        return None
-
-    # -----------------------------------------------------
-    # ENCRYPTED SECRET
-    # -----------------------------------------------------
-
-    if stored_value.startswith(
-        ENCRYPTED_PREFIX
+    def __init__(
+        self,
+        root,
+        account,
+        success_callback,
+        back_callback,
     ):
+        self.root = root
+        self.account = account
+        self.success_callback = success_callback
+        self.back_callback = back_callback
 
-        secret = decrypt_secret(
-            stored_value
+        self.frame = tk.Frame(
+            self.root,
+            bg="#F4F7FB",
         )
 
-    # -----------------------------------------------------
-    # OLD PLAINTEXT SECRET
-    # -----------------------------------------------------
+        self.otp_var = tk.StringVar()
 
-    else:
+        self._build_ui()
 
-        secret = stored_value.strip()
+    # =====================================================
+    # BUILD UI
+    # =====================================================
 
-        # Migrate plaintext to encrypted storage.
-        encrypted_value = encrypt_secret(
-            secret
+    def _build_ui(self):
+
+        self.frame = tk.Frame(
+            self.root,
+            bg="#F4F7FB",
         )
 
-        update_admin_totp_secret(
-            username,
-            encrypted_value
+        container = tk.Frame(
+            self.frame,
+            bg="white",
+            bd=1,
+            relief="solid",
+            padx=40,
+            pady=35,
         )
 
-        append_admin_audit(
-            username,
-            account["role"],
-            "2FA_MIGRATION",
-            "Existing TOTP secret migrated to encrypted storage.",
-            "SUCCESS",
+        container.place(
+            relx=0.5,
+            rely=0.5,
+            anchor="center",
         )
 
-    # -----------------------------------------------------
-    # NORMALIZE
-    # -----------------------------------------------------
+        tk.Label(
+            container,
+            text="CENTRAL ADMINISTRATOR",
+            font=("Segoe UI", 20, "bold"),
+            bg="white",
+            fg="#16213E",
+        ).pack(pady=(0, 8))
 
-    secret = secret.strip().upper()
+        tk.Label(
+            container,
+            text="Two-Factor Authentication",
+            font=("Segoe UI", 14, "bold"),
+            bg="white",
+            fg="#2C3E50",
+        ).pack(pady=(0, 18))
 
-    # -----------------------------------------------------
-    # VALIDATE BASE32 SECRET
-    # -----------------------------------------------------
+        tk.Label(
+            container,
+            text=(
+                "Enter the 6-digit code from your\n"
+                "authenticator application."
+            ),
+            font=("Segoe UI", 11),
+            bg="white",
+            fg="#555555",
+            justify="center",
+        ).pack(pady=(0, 20))
 
-    allowed = set(
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
-    )
+        tk.Label(
+            container,
+            text=f"Account: {self.account.get('username', '')}",
+            font=("Segoe UI", 10, "bold"),
+            bg="white",
+            fg="#34495E",
+        ).pack(pady=(0, 12))
 
-    if (
-        len(secret) != 32
-        or bool(set(secret) - allowed)
-    ):
-
-        raise ValueError(
-            "Stored Central TOTP secret is invalid."
+        self.otp_entry = tk.Entry(
+            container,
+            textvariable=self.otp_var,
+            font=("Segoe UI", 18, "bold"),
+            justify="center",
+            width=10,
+            show="•",
+            relief="solid",
+            bd=1,
         )
 
-    return secret
-
-
-# =========================================================
-# CREATE TOTP SECRET
-# =========================================================
-
-def create_totp_secret(username):
-
-    account = get_admin_account(
-        username
-    )
-
-    if account is None:
-        raise ValueError(
-            "Administrator account not found."
+        self.otp_entry.pack(
+            pady=(0, 20),
+            ipady=6,
         )
 
-    # -----------------------------------------------------
-    # USE EXISTING SECRET
-    # -----------------------------------------------------
-
-    existing_secret = _load_totp_secret(
-        username
-    )
-
-    if existing_secret:
-        return existing_secret
-
-    # -----------------------------------------------------
-    # GENERATE NEW SECRET
-    # -----------------------------------------------------
-
-    secret = pyotp.random_base32()
-
-    encrypted_value = encrypt_secret(
-        secret
-    )
-
-    update_admin_totp_secret(
-        username,
-        encrypted_value
-    )
-
-    append_admin_audit(
-        username,
-        account["role"],
-        "2FA_SETUP",
-        "Central TOTP secret generated and encrypted.",
-        "SUCCESS",
-    )
-
-    return secret
-
-
-# =========================================================
-# GET TOTP OBJECT
-# =========================================================
-
-def get_totp(username):
-
-    # Load the decrypted TOTP secret.
-    secret = _load_totp_secret(
-        username
-    )
-
-    if secret is None:
-        return None
-
-    return pyotp.TOTP(
-        secret,
-        interval=TOTP_INTERVAL,
-        digits=TOTP_DIGITS,
-    )
-
-
-# =========================================================
-# GET CURRENT OTP
-# =========================================================
-
-def get_current_otp(username):
-
-    totp = get_totp(
-        username
-    )
-
-    if totp is None:
-        return None
-
-    return totp.now()
-
-
-# =========================================================
-# VERIFY OTP
-# =========================================================
-
-def verify_totp(
-    username,
-    otp
-):
-
-    account = get_admin_account(
-        username
-    )
-
-    if account is None:
-
-        return (
-            False,
-            "Administrator account not found."
+        self.otp_entry.bind(
+            "<Return>",
+            self._verify,
         )
 
-    try:
-
-        totp = get_totp(
-            username
+        button_frame = tk.Frame(
+            container,
+            bg="white",
         )
 
-    except Exception:
+        button_frame.pack()
 
-        append_admin_audit(
-            username,
-            account["role"],
-            "2FA",
-            "Central TOTP secret could not be loaded securely.",
-            "BLOCKED",
+        tk.Button(
+            button_frame,
+            text="VERIFY 2FA",
+            font=("Segoe UI", 11, "bold"),
+            bg="#1F6FEB",
+            fg="white",
+            activebackground="#185ABC",
+            activeforeground="white",
+            width=16,
+            command=self._verify,
+            relief="flat",
+            cursor="hand2",
+        ).grid(
+            row=0,
+            column=0,
+            padx=6,
         )
 
-        return (
-            False,
-            "Central 2FA configuration is invalid."
+        tk.Button(
+            button_frame,
+            text="BACK",
+            font=("Segoe UI", 11, "bold"),
+            bg="#E5E7EB",
+            fg="#1F2937",
+            activebackground="#D1D5DB",
+            width=12,
+            command=self._back,
+            relief="flat",
+            cursor="hand2",
+        ).grid(
+            row=0,
+            column=1,
+            padx=6,
         )
 
-    if totp is None:
-
-        append_admin_audit(
-            username,
-            account["role"],
-            "2FA",
-            "TOTP verification attempted before setup.",
-            "BLOCKED",
+        tk.Label(
+            container,
+            text="Your authenticator code is never stored or displayed here.",
+            font=("Segoe UI", 9),
+            bg="white",
+            fg="#777777",
+        ).pack(
+            pady=(18, 0),
         )
 
-        return (
-            False,
-            "Central 2FA has not been configured."
+    # =====================================================
+    # VERIFY
+    # =====================================================
+
+    def _verify(self, event=None):
+
+        otp = self.otp_var.get().strip()
+
+        if not otp:
+            messagebox.showwarning(
+                "2FA Required",
+                "Enter your 6-digit authenticator code.",
+                parent=self.root,
+            )
+            self.otp_entry.focus_set()
+            return
+
+        if len(otp) != 6 or not otp.isdigit():
+            messagebox.showerror(
+                "Invalid OTP",
+                "Enter exactly 6 digits.",
+                parent=self.root,
+            )
+            self.otp_var.set("")
+            self.otp_entry.focus_set()
+            return
+
+        try:
+            success, message = verify_totp(
+                self.account["username"],
+                otp,
+            )
+
+        except Exception:
+            success = False
+            message = "Central 2FA verification failed."
+
+        if success:
+
+            self.otp_var.set("")
+
+            messagebox.showinfo(
+                "2FA Verified",
+                "Central administrator authentication successful.",
+                parent=self.root,
+            )
+
+            self.success_callback(
+                self.account
+            )
+
+            return
+
+        self.otp_var.set("")
+        self.otp_entry.focus_set()
+
+        messagebox.showerror(
+            "2FA Failed",
+            message,
+            parent=self.root,
         )
 
-    otp = str(
-        otp
-    ).strip()
+    # =====================================================
+    # BACK
+    # =====================================================
 
-    # -----------------------------------------------------
-    # STRICT SIX-DIGIT VALIDATION
-    # -----------------------------------------------------
+    def _back(self):
 
-    if (
-        len(otp) != TOTP_DIGITS
-        or not otp.isdigit()
-    ):
+        self.otp_var.set("")
 
-        append_admin_audit(
-            username,
-            account["role"],
-            "2FA",
-            "Invalid OTP format.",
-            "FAILED",
+        self.back_callback()
+
+    # =====================================================
+    # SHOW
+    # =====================================================
+
+    def show(self):
+
+        self.frame.pack(
+            fill="both",
+            expand=True,
         )
 
-        return (
-            False,
-            "Enter the 6-digit authenticator code."
-        )
+        self.otp_var.set("")
 
-    # -----------------------------------------------------
-    # VERIFY CURRENT OTP WINDOW
-    # -----------------------------------------------------
+        self.otp_entry.focus_set()
 
-    try:
+    # =====================================================
+    # HIDE
+    # =====================================================
 
-        valid = totp.verify(
-            otp,
-            valid_window=0
-        )
+    def hide(self):
 
-    except Exception:
-
-        valid = False
-
-    if not valid:
-
-        append_admin_audit(
-            username,
-            account["role"],
-            "2FA",
-            "TOTP verification failed.",
-            "FAILED",
-        )
-
-        return (
-            False,
-            "Invalid or expired OTP."
-        )
-
-    append_admin_audit(
-        username,
-        account["role"],
-        "2FA",
-        "TOTP verification successful.",
-        "SUCCESS",
-    )
-
-    return (
-        True,
-        "2FA verification successful."
-    )
-
-
-# =========================================================
-# AUTHENTICATOR PROVISIONING URI
-# =========================================================
-
-def get_provisioning_uri(username):
-
-    secret = _load_totp_secret(
-        username
-    )
-
-    if secret is None:
-
-        secret = create_totp_secret(
-            username
-        )
-
-    totp = pyotp.TOTP(
-        secret,
-        interval=TOTP_INTERVAL,
-        digits=TOTP_DIGITS,
-    )
-
-    return totp.provisioning_uri(
-        name=username,
-        issuer_name=TOTP_ISSUER,
-    )
+        self.frame.pack_forget()

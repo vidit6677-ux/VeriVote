@@ -237,7 +237,7 @@ class VeriVoteApp:
         self.current_admin_account = account
 
         # -------------------------------------------------
-        # CENTRAL → FACE VERIFICATION
+        # CENTRAL -> FACE VERIFICATION
         # -------------------------------------------------
 
         if account["role"] == "CENTRAL":
@@ -258,7 +258,7 @@ class VeriVoteApp:
             return
 
         # -------------------------------------------------
-        # OTHER LEVELS → DIRECT DASHBOARD
+        # OTHER LEVELS -> DIRECT DASHBOARD
         # -------------------------------------------------
 
         self.show_admin_dashboard(
@@ -277,7 +277,7 @@ class VeriVoteApp:
         self.current_admin_account = account
 
         # -------------------------------------------------
-        # CENTRAL → 2FA
+        # CENTRAL -> 2FA
         # -------------------------------------------------
 
         self.admin_2fa_screen = Admin2FAScreen(
@@ -305,15 +305,10 @@ class VeriVoteApp:
         role = account["role"]
 
         dashboard_class = {
-
             "BOOTH": BoothDashboard,
-
             "ZONAL": ZonalDashboard,
-
             "DEPUTY": DeputyDashboard,
-
             "CENTRAL": CentralDashboard,
-
         }.get(role)
 
         if dashboard_class is None:

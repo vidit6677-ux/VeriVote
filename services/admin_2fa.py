@@ -6,6 +6,11 @@ from database import (
     append_admin_audit,
 )
 
+from utils.secret_storage import (
+    encrypt_secret,
+    decrypt_secret,
+)
+
 
 # =========================================================
 # TOTP CONFIGURATION
@@ -15,9 +20,105 @@ TOTP_INTERVAL = 30
 TOTP_DIGITS = 6
 TOTP_ISSUER = "VeriVote"
 
+ENCRYPTED_PREFIX = "enc:v1:"
+
 
 # =========================================================
-# CREATE CENTRAL TOTP SECRET
+# LOAD AND DECRYPT TOTP SECRET
+# =========================================================
+
+def _load_totp_secret(username):
+    """
+    Load the Central administrator's TOTP secret.
+
+    The database may contain:
+        1. an encrypted secret, or
+        2. an older plaintext secret.
+
+    Plaintext secrets are migrated to encrypted storage.
+    The returned value is the decrypted Base32 secret.
+    """
+
+    account = get_admin_account(username)
+
+    if account is None:
+        raise ValueError(
+            "Administrator account not found."
+        )
+
+    stored_value = account.get(
+        "totp_secret",
+        ""
+    )
+
+    if not stored_value:
+        return None
+
+    # -----------------------------------------------------
+    # ENCRYPTED SECRET
+    # -----------------------------------------------------
+
+    if stored_value.startswith(
+        ENCRYPTED_PREFIX
+    ):
+
+        secret = decrypt_secret(
+            stored_value
+        )
+
+    # -----------------------------------------------------
+    # OLD PLAINTEXT SECRET
+    # -----------------------------------------------------
+
+    else:
+
+        secret = stored_value.strip()
+
+        encrypted_value = encrypt_secret(
+            secret
+        )
+
+        update_admin_totp_secret(
+            username,
+            encrypted_value
+        )
+
+        append_admin_audit(
+            username,
+            account["role"],
+            "2FA_MIGRATION",
+            "Existing TOTP secret migrated to encrypted storage.",
+            "SUCCESS",
+        )
+
+    # -----------------------------------------------------
+    # NORMALIZE
+    # -----------------------------------------------------
+
+    secret = secret.strip().upper()
+
+    # -----------------------------------------------------
+    # VALIDATE BASE32 SECRET
+    # -----------------------------------------------------
+
+    allowed = set(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+    )
+
+    if (
+        len(secret) != 32
+        or bool(set(secret) - allowed)
+    ):
+
+        raise ValueError(
+            "Stored Central TOTP secret is invalid."
+        )
+
+    return secret
+
+
+# =========================================================
+# CREATE TOTP SECRET
 # =========================================================
 
 def create_totp_secret(username):
@@ -31,35 +132,38 @@ def create_totp_secret(username):
             "Administrator account not found."
         )
 
-    existing_secret = account.get(
+    existing = account.get(
         "totp_secret",
         ""
     )
 
-    # -----------------------------------------------------
-    # Reuse existing secret.
-    # -----------------------------------------------------
+    if existing:
+        secret = _load_totp_secret(
+            username
+        )
 
-    if existing_secret:
+        if secret:
+            return secret
 
-        return existing_secret
+    # 160-bit Base32 secret (32 characters).
+    secret = pyotp.random_base32(
+        length=32
+    )
 
-    # -----------------------------------------------------
-    # Generate a cryptographically random TOTP secret.
-    # -----------------------------------------------------
-
-    secret = pyotp.random_base32()
+    encrypted_value = encrypt_secret(
+        secret
+    )
 
     update_admin_totp_secret(
         username,
-        secret
+        encrypted_value
     )
 
     append_admin_audit(
         username,
         account["role"],
         "2FA_SETUP",
-        "TOTP secret provisioned.",
+        "Central TOTP secret created and stored encrypted.",
         "SUCCESS",
     )
 
@@ -67,12 +171,12 @@ def create_totp_secret(username):
 
 
 # =========================================================
-# CREATE TOTP OBJECT
+# GET TOTP OBJECT
 # =========================================================
 
 def get_totp(username):
 
-    # Always load the decrypted TOTP secret.
+    # Always load the decrypted secret.
     secret = _load_totp_secret(
         username
     )
@@ -88,7 +192,7 @@ def get_totp(username):
 
 
 # =========================================================
-# GENERATE CURRENT OTP
+# CURRENT OTP
 # =========================================================
 
 def get_current_otp(username):
@@ -109,7 +213,7 @@ def get_current_otp(username):
 
 def verify_totp(
     username,
-    otp
+    otp,
 ):
 
     account = get_admin_account(
@@ -117,15 +221,31 @@ def verify_totp(
     )
 
     if account is None:
-
         return (
             False,
             "Administrator account not found."
         )
 
-    totp = get_totp(
-        username
-    )
+    try:
+
+        totp = get_totp(
+            username
+        )
+
+    except Exception:
+
+        append_admin_audit(
+            username,
+            account["role"],
+            "2FA",
+            "Unable to load TOTP configuration.",
+            "FAILED",
+        )
+
+        return (
+            False,
+            "Central 2FA configuration is invalid."
+        )
 
     if totp is None:
 
@@ -133,7 +253,7 @@ def verify_totp(
             username,
             account["role"],
             "2FA",
-            "TOTP verification attempted before setup.",
+            "2FA verification attempted before setup.",
             "BLOCKED",
         )
 
@@ -147,7 +267,7 @@ def verify_totp(
     ).strip()
 
     # -----------------------------------------------------
-    # Strict six-digit OTP check
+    # STRICT SIX-DIGIT VALIDATION
     # -----------------------------------------------------
 
     if (
@@ -169,16 +289,19 @@ def verify_totp(
         )
 
     # -----------------------------------------------------
-    # Verify current TOTP.
-    #
-    # valid_window=0 means we accept only the current
-    # 30-second TOTP window.
+    # VERIFY CURRENT OTP WINDOW
     # -----------------------------------------------------
 
-    valid = totp.verify(
-        otp,
-        valid_window=0
-    )
+    try:
+
+        valid = totp.verify(
+            otp,
+            valid_window=0
+        )
+
+    except Exception:
+
+        valid = False
 
     if not valid:
 
@@ -210,27 +333,16 @@ def verify_totp(
 
 
 # =========================================================
-# AUTHENTICATOR APP PROVISIONING URI
+# AUTHENTICATOR PROVISIONING URI
 # =========================================================
 
 def get_provisioning_uri(username):
 
-    account = get_admin_account(
+    secret = _load_totp_secret(
         username
     )
 
-    if account is None:
-
-        raise ValueError(
-            "Administrator account not found."
-        )
-
-    secret = account.get(
-        "totp_secret",
-        ""
-    )
-
-    if not secret:
+    if secret is None:
 
         secret = create_totp_secret(
             username
