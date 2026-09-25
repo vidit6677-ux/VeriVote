@@ -1,4 +1,4 @@
-import time
+﻿import time
 import tkinter as tk
 from tkinter import messagebox
 
@@ -17,7 +17,7 @@ from services.integrity_service import (
     verify_integrity,
 )
 
-from services.sync_service import (
+from services.four_level_sync import (
     get_four_level_security_summary,
 )
 
@@ -777,7 +777,7 @@ class BaseAdminDashboard:
 
             tk.Label(
                 empty,
-                text="✓ No visible security alerts",
+                text="âœ“ No visible security alerts",
                 font=("Arial", 9, "bold"),
                 fg=self.green,
                 bg="#ECFDF3",
@@ -823,7 +823,7 @@ class BaseAdminDashboard:
             )
 
             title = (
-                f"{alert['source_level']}  •  "
+                f"{alert['source_level']}  â€¢  "
                 f"{alert['event_type']}"
             )
 
@@ -918,24 +918,24 @@ class BaseAdminDashboard:
         )
 
         ledger_message = (
-            "✓ Ledger integrity verified."
+            "âœ“ Ledger integrity verified."
             if integrity_ok
             else
-            "⚠ Ledger integrity check failed."
+            "âš  Ledger integrity check failed."
         )
 
         sync_message = (
-            "✓ Four-level synchronization is valid."
+            "âœ“ Four-level synchronization is valid."
             if overall == "SECURE"
             else
-            f"⚠ Four-level status: {overall}"
+            f"âš  Four-level status: {overall}"
         )
 
         alert_message = (
-            "✓ No visible security alerts."
+            "âœ“ No visible security alerts."
             if alert_count == 0
             else
-            f"⚠ {alert_count} visible security alert(s)."
+            f"âš  {alert_count} visible security alert(s)."
         )
 
         if (
@@ -1209,3 +1209,4 @@ class CentralDashboard(BaseAdminDashboard):
             padx=15,
             pady=(0, 12),
         )
+

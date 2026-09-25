@@ -1014,3 +1014,56 @@ def synchronize_independent_databases():
             )
 
     return snapshots
+
+# =========================================================
+# ADMIN DASHBOARD COMPATIBILITY SUMMARY
+# =========================================================
+
+def get_four_level_security_summary():
+
+    result = verify_independent_databases()
+
+    levels = {}
+
+    for level in LEVELS:
+
+        own_alerts = result["alerts_by_observer"].get(
+            level,
+            []
+        )
+
+        status = "SYNCED"
+
+        if own_alerts:
+
+            has_local_tamper = any(
+                alert["source_level"] == level
+                and alert["type"] in (
+                    "LOCAL_LEDGER_MISMATCH",
+                    "INVALID_LOCAL_SIGNATURE",
+                    "MISSING_LOCAL_CHECKPOINT",
+                )
+                for alert in own_alerts
+            )
+
+            status = (
+                "TAMPERED"
+                if has_local_tamper
+                else "MISMATCH"
+            )
+
+        levels[level] = {
+            "status": status,
+            "last_vote_id": result["states"][level]["last_vote_id"],
+            "ledger_hash": result["states"][level]["ledger_hash"],
+        }
+
+    return {
+        "overall": (
+            "SECURE"
+            if result["synchronized"]
+            else "ALERT"
+        ),
+        "levels": levels,
+        "alerts": result["alerts_by_observer"],
+    }
