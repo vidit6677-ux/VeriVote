@@ -663,6 +663,11 @@ The prototype uses:
 - Python
 - Tkinter
 - SQLite
+- FastAPI + Uvicorn
+- Pydantic request validation
+- Pytest + HTTPX API tests
+- GitHub Actions CI
+- Docker / Docker Compose
 - OpenCV
 - OpenCV Contrib
 - LBPH Face Recognizer
@@ -677,54 +682,56 @@ The prototype uses:
 ```text
 VeriVote/
 │
-├── main.py
-├── config.py
-├── database.py
-├── requirements.txt
-├── README.md
-│
-├── setup_central_face.py
-├── setup_central_2fa.py
-├── reset_demo.py
-├── generate_demo_qr.py
-├── test_camera.py
-├── test_level_tamper.py
-│
+├── api/                         # FastAPI transport and API controls
+│   ├── main.py
+│   ├── rate_limit.py
+│   ├── replay.py
+│   └── security.py
 ├── data/
 │   └── demo_voters.py
-│
-├── demo_qr_codes/
-│
-├── face_data/
-│
-├── models/
-│   └── haarcascade_frontalface_default.xml
-│
-├── gui/
-│   ├── login.py
-│   ├── voter_verification.py
-│   ├── biometric.py
-│   ├── ballot.py
-│   ├── result.py
-│   ├── admin_login.py
-│   ├── admin_face.py
-│   ├── admin_2fa.py
-│   └── admin_dashboards.py
-│
-├── services/
-│   ├── biometric_service.py
+├── docs/                        # Security, threat-model, migration notes
+│   ├── postgresql-migration.md
+│   ├── security.md
+│   └── threat-model.md
+├── gui/                         # Existing Tkinter workflow and dashboards
+├── services/                    # Domain, cryptography, replication services
+│   ├── crypto_service.py
+│   ├── four_level_sync.py
 │   ├── integrity_service.py
-│   ├── voting_service.py
-│   ├── notification_service.py
-│   ├── admin_security.py
-│   ├── admin_2fa.py
-│   ├── sync_service.py
-│   └── alert_service.py
-│
-└── utils/
-    ├── security.py
-    └── secret_storage.py
+│   ├── privacy_service.py
+│   ├── replication_service.py
+│   └── voting_service.py
+├── tests/                       # Automated API, crypto, replay/rate tests
+│   ├── test_api.py
+│   ├── test_crypto.py
+│   └── test_replay_and_rate_limit.py
+├── utils/
+│   ├── secret_storage.py
+│   └── security.py
+├── .github/workflows/ci.yml
+├── .dockerignore
+├── .env.example
+├── .gitattributes
+├── .gitignore
+├── config.py
+├── database.py
+├── docker-compose.yml
+├── Dockerfile
+├── main.py
+├── pyproject.toml
+├── README.md
+├── requirements-dev.txt
+├── requirements.txt
+├── reset_demo.py
+├── setup_central_2fa.py
+├── setup_central_face.py
+├── test_end_to_end_vote.py
+├── test_four_db_sync.py
+└── test_level_tamper.py
 ```
+
+Runtime SQLite databases, biometric material, `.env`, test caches, and
+`work/` are intentionally excluded from version control.
 
 ---
 
@@ -755,6 +762,9 @@ opencv-contrib-python
 twilio
 pyotp
 cryptography
+fastapi
+uvicorn
+PyJWT
 ```
 
 ---
@@ -769,12 +779,19 @@ Current environment-variable names include:
 TWILIO_ACCOUNT_SID
 TWILIO_AUTH_TOKEN
 TWILIO_PHONE_NUMBER
+VERIVOTE_JWT_SECRET
 VERIVOTE_CENTRAL_TOTP_KEY
+VERIVOTE_BOOTH_SIGNING_KEY
+VERIVOTE_ZONAL_SIGNING_KEY
+VERIVOTE_DEPUTY_SIGNING_KEY
+VERIVOTE_CENTRAL_SIGNING_KEY
+VERIVOTE_<LEVEL>_ED25519_PRIVATE_KEY
+VERIVOTE_<LEVEL>_ED25519_PUBLIC_KEY
 ```
 
-Do not commit actual values to GitHub.
-
-The Central encryption key should remain outside the repository.
+Do not commit actual values to GitHub. Use `.env.example` as the variable-name
+template. The checked-in defaults are for the academic demo only; production
+deployments must provide externally managed secrets.
 
 ---
 
@@ -792,9 +809,8 @@ The local reference is stored as:
 face_data/central_admin.jpg
 ```
 
-The `face_data/` directory is excluded from Git.
-
-The face-recognition implementation is intended for the college prototype.
+The `face_data/` directory is excluded from Git. The face-recognition
+implementation is intended for the college prototype.
 
 ---
 
@@ -808,9 +824,8 @@ The enrollment utility is:
 python setup_central_2fa.py
 ```
 
-The setup secret should only be handled during controlled enrollment.
-
-Normal Central login does not display the secret.
+The setup secret should only be handled during controlled enrollment. Normal
+Central GUI login does not display the secret.
 
 ---
 
@@ -822,15 +837,67 @@ Start VeriVote from the project root:
 python main.py
 ```
 
-The application provides:
+## FastAPI backend
 
-```text
-Voter Workflow
-+
-Administrative Workflow
+Start the API with:
+
+```bash
+python -m uvicorn api.main:app --reload
 ```
 
-The application should be run from the project root so the expected database, model, and local-data paths are available.
+Useful endpoints:
+
+```text
+GET  /health                       Liveness check
+GET  /ready                        Database readiness check
+GET  /docs                         Interactive OpenAPI documentation
+POST /auth/login                   Issue a short-lived role-scoped JWT
+GET  /voters/{identity}            Read a voter record
+POST /votes                        Authenticated, idempotent legacy vote
+POST /ballots/issue                Issue a one-time tokenized ballot
+POST /ballots/cast                 Submit a tokenized ballot
+GET  /integrity/status             Central-only four-level integrity summary
+POST /integrity/replication/retry  Central-only retry of queued replication
+```
+
+The API delegates vote decisions to `services.voting_service.cast_vote`; it
+does not duplicate voting rules. Voter, vote, and integrity endpoints require
+a bearer token. Vote submissions require an `Idempotency-Key` with 8–128
+letters, digits, `.`, `_`, `:`, or `-`; same-payload reuse and different-payload
+reuse both return HTTP 409 with distinct reasons.
+
+**Central API boundary:** the API's Central password-to-JWT login is a
+demo-only path and does not execute the GUI's face and TOTP MFA steps. It must
+not be described as MFA-equivalent Central access.
+
+If a local vote commits, its `replication_outbox` row commits in the same
+transaction. Four-level replication is then attempted; Central can retry a
+pending job if that step fails. The outbox is identity-linked and local to this
+prototype host.
+
+The tokenized ballot path separates the eligibility-to-token mapping from
+`private_ballots`, but both are currently local SQLite data stores. The legacy
+GUI and `/votes` endpoint remain identity-linked compatibility paths and do not
+provide ballot secrecy.
+
+Stable `/api/v1` aliases are available for health, authentication, voter, vote,
+and integrity endpoints. The SQLite-to-PostgreSQL boundary and migration
+sequence are documented in `docs/postgresql-migration.md`; PostgreSQL is not
+implemented or claimed as complete.
+
+## Cryptographic model
+
+SHA-256 hashes use fixed-order, length-delimited UTF-8 fields for votes and
+checkpoint material. Passwords use PBKDF2-HMAC-SHA256, not plain SHA-256.
+Checkpoints use HMAC-SHA-256 only as an explicit demo fallback; Ed25519 is used
+when a level has both configured private and public keys.
+
+For a containerized API demo:
+
+```bash
+copy .env.example .env
+docker compose up --build
+```
 
 ---
 
@@ -845,441 +912,90 @@ DEPUTY
 CENTRAL
 ```
 
-The configured demonstration usernames are:
-
-```text
-booth01
-zonal01
-deputy01
-central01
-```
-
-The demonstration passwords are defined in the project configuration and are intended only for the college prototype.
-
-> Do not reuse demonstration credentials in a real system.
+The demonstration credentials are defined in project configuration and are for
+the college prototype only. Do not reuse them in a real system.
 
 ---
 
 # 28. Demo Voter Data
 
-The prototype contains demonstration voters associated with constituencies.
-
-The current voter data is defined in:
-
-```text
-data/demo_voters.py
-```
-
-Example project identities include:
-
-```text
-647162579350
-471099122860
-777933171417
-914353580104
-```
-
-The project also contains demo QR images and local face-reference images for testing.
-
-Sensitive or personal-looking demonstration data should not be published unnecessarily.
+Demo voters are defined in `data/demo_voters.py`. Demo QR images and local
+face references are testing material and should not be published unnecessarily.
 
 ---
 
 # 29. Testing
 
-## 29.1 Application Startup
-
-Run:
+Run the repeatable regression suite:
 
 ```bash
-python main.py
+python -m pytest tests -q
 ```
 
-Verify that the GUI loads successfully.
+The suite covers API authentication/RBAC, vote validation, four-level integrity
+endpoint wiring, crypto primitives, idempotency conflicts, and rate-limiter
+behaviour.
 
----
-
-## 29.2 Admin Dashboard Test
-
-Verify each level:
-
-```text
-BOOTH   → Booth Dashboard
-ZONAL   → Zonal Dashboard
-DEPUTY  → Deputy Dashboard
-CENTRAL → Password → Face → 2FA → Central Dashboard
-```
-
----
-
-## 29.3 Duplicate Voting Test
-
-Use a voter who has not yet voted.
-
-Expected:
-
-```text
-First vote
-   ↓
-SUCCESS
-```
-
-Then attempt a second vote using the same voter.
-
-Expected:
-
-```text
-Second vote
-   ↓
-BLOCKED
-```
-
-The database should contain only one vote for that voter.
-
----
-
-## 29.4 Database Constraint Test
-
-The unique index should exist:
-
-```text
-idx_votes_one_vote_per_voter
-```
-
-It is created on:
-
-```text
-votes(voter_identity)
-```
-
----
-
-## 29.5 Ledger Integrity Test
-
-The project can recalculate the vote hashes and verify the chain.
-
-Expected healthy state:
-
-```text
-Ledger integrity → VALID
-```
-
----
-
-## 29.6 Four-Level Synchronization Test
-
-After synchronization:
-
-```text
-BOOTH     → SYNCED
-ZONAL     → SYNCED
-DEPUTY    → SYNCED
-CENTRAL   → SYNCED
-```
-
----
-
-## 29.7 Tamper Detection Test
-
-Run:
+Run the additional project verification scripts:
 
 ```bash
+python test_four_db_sync.py
+python test_end_to_end_vote.py
 python test_level_tamper.py
 ```
 
-The test temporarily modifies a Booth checkpoint and checks whether the system flags the change.
-
-Expected:
-
-```text
-BOOTH → TAMPERED / MISMATCH
-```
-
-The test restores the original Booth checkpoint after execution.
-
----
-
-## 29.8 Central 2FA Test
-
-Verify:
-
-```text
-Password ✓
-Face     ✓
-TOTP     ✓
-```
-
-Then verify that Central access is granted only after all required steps succeed.
+GitHub Actions installs the development dependencies and enforces compilation,
+tests, Bandit, Ruff, and pip-audit on pushes and pull requests.
 
 ---
 
 # 30. Git and GitHub
 
-The repository is hosted on GitHub:
-
-```text
-https://github.com/vidit6677-ux/VeriVote
-```
-
-The project uses Git for version control.
-
-Recommended development flow:
-
-```text
-Change Code
-    ↓
-Run Tests
-    ↓
-git status
-    ↓
-git add .
-    ↓
-git commit
-    ↓
-git push
-```
-
-Security-sensitive files should remain excluded through `.gitignore`.
-
-The following should not be committed:
-
-```text
-verivote.db
-face_data/
-.env
-TOTP encryption keys
-Twilio authentication tokens
-Other private secrets
-```
+Security-sensitive files must remain excluded through `.gitignore`, including
+database files, biometric reference files, `.env`, tokens, keys, test caches,
+and temporary work products.
 
 ---
 
 # 31. Security and Privacy Notes
 
-The repository should not contain:
-
-```text
-Database files
-Biometric reference files
-Authentication secrets
-Twilio credentials
-Central encryption keys
-Private environment files
-```
-
-The project uses environment variables for external secrets.
-
-The Central TOTP encryption key is intended to remain outside the repository.
-
-Demo QR and voter data should be treated as project data rather than public production data.
+The threat model and residual risks are documented in `docs/threat-model.md`.
+VeriVote is a defense-in-depth, tamper-evident academic prototype, not a
+production-ready election system.
 
 ---
 
 # 32. Limitations
 
-VeriVote is a college project prototype.
-
-## Face Verification
-
-The face-verification component uses laptop-camera computer vision and is intended to demonstrate the concept.
-
-It should not be treated as production-grade biometric authentication.
-
-## Hash Chain
-
-The vote hash chain provides tamper evidence.
-
-It does not by itself physically prevent database deletion or compromise.
-
-## SQLite
-
-SQLite is convenient for a classroom prototype.
-
-A production election system would require hardened infrastructure and a much larger security architecture.
-
-## Secret Management
-
-The project demonstrates encrypted secret storage and environment-based key handling.
-
-A production deployment would require stronger key lifecycle management, secure provisioning, rotation, access control, and potentially hardware-backed key storage.
+SQLite, local biometric processing, demo credentials, process-local replay and
+rate controls, a local token issuance mapping, and a local replication outbox
+are intentionally limited to a classroom prototype. Production deployment
+would require independent infrastructure, external identity/MFA, managed key
+storage, a shared rate-limit/replay store, external audit storage, and formal
+security review.
 
 ---
 
 # 33. Development Roadmap
 
-The project is being developed through the following phases:
-
-```text
-Phase 1
-Four-Level Admin Dashboards
-
-Phase 2
-Role-Based Admin Authentication
-
-Phase 3
-Central Enhanced Security
-
-Phase 4
-Three-Way has_voted Protection
-
-Phase 5
-Vote Ledger Integrity
-
-Phase 6
-Four-Level Synchronization
-
-Phase 7
-Cross-Level Tamper Detection
-
-Phase 8
-Audit Logs + Security Alerts
-
-Phase 9
-GUI Integration
-
-Phase 10
-End-to-End Security Testing
-```
-
-The development approach is to complete and test one security layer before adding the next.
+Future production work includes PostgreSQL migration, independent identity and
+MFA, managed secrets, external audit storage, distributed replay/rate controls,
+deployment hardening, and formal review.
 
 ---
 
 # 34. Project Status
 
-Current implemented prototype components include:
-
-```text
-✓ Voter verification
-✓ QR / identity verification
-✓ Eligibility checks
-✓ Constituency validation
-✓ Face verification
-✓ Ballot workflow
-✓ Vote hashing
-✓ Hash-chain ledger
-✓ SMS notification
-✓ Three-way vote protection
-✓ Booth dashboard
-✓ Zonal dashboard
-✓ Deputy dashboard
-✓ Central dashboard
-✓ Role-based admin authentication
-✓ Password hashing
-✓ Admin lockout
-✓ Central face authentication
-✓ Central TOTP 2FA
-✓ Encrypted Central TOTP storage
-✓ Admin audit logging
-✓ Security event logging
-✓ Integrity checkpoints
-✓ Four-level synchronization backend
-✓ Cross-level tamper detection test
-```
+Implemented prototype components include voter verification, duplicate-vote
+protection, hash-chain integrity, four-level synchronization and tamper checks,
+admin roles, GUI Central face/TOTP workflow, JWT/RBAC API controls, tokenized
+ballot support, transactional replication recovery, automated tests, CI,
+Docker, and security documentation.
 
 ---
 
 # 35. Academic Demonstration
 
-The project can be demonstrated through the following sequence.
-
-## Demonstration 1 — Normal Voting
-
-```text
-QR
- ↓
-Eligibility
- ↓
-Face
- ↓
-Ballot
- ↓
-Vote
- ↓
-Ledger
- ↓
-has_voted = 1
- ↓
-SMS
-```
-
-## Demonstration 2 — Duplicate Vote Prevention
-
-```text
-First Vote
-    ↓
-Accepted
-
-Second Attempt
-    ↓
-Blocked
-```
-
-## Demonstration 3 — Central Security
-
-```text
-Central Login
-    ↓
-Password
-    ↓
-Face
-    ↓
-TOTP
-    ↓
-Central Dashboard
-```
-
-## Demonstration 4 — Four-Level Synchronization
-
-```text
-BOOTH     ✓
-ZONAL     ✓
-DEPUTY    ✓
-CENTRAL   ✓
-```
-
-## Demonstration 5 — Tamper Detection
-
-```text
-Modify Booth Checkpoint
-        ↓
-Integrity Verification
-        ↓
-Booth Flagged
-        ↓
-Higher-Level Alert
-        ↓
-Central Sees Security Event
-```
-
----
-
-# Final Note
-
-VeriVote demonstrates how multiple security mechanisms can be combined in a controlled academic prototype:
-
-```text
-Identity Verification
-        +
-Face Verification
-        +
-Role-Based Access
-        +
-Multi-Factor Authentication
-        +
-Database Constraints
-        +
-Atomic Transactions
-        +
-Cryptographic Hashing
-        +
-Integrity Checkpoints
-        +
-Tamper Detection
-        +
-Audit Logging
-        +
-Security Alerts
-```
-
-The project should be presented as a **defense-in-depth, tamper-evident prototype**, not as an unbreakable or production-ready election system.
+Use the GUI to demonstrate the voter and Central GUI MFA flows, then use the
+test commands above to demonstrate replication and tamper detection. Present
+the system as a controlled academic prototype.

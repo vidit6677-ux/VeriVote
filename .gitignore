@@ -23,6 +23,9 @@ ENV/
 face_data/
 
 # Generated / temporary files
+.pytest_cache/
+pytest-cache-files-*/
+work/
 *.log
 *.tmp
 *.bak
@@ -34,3 +37,20 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+
+# Pytest cache
+.pytest_cache/
+pytest-cache-files-*/
+
+# Temporary Codex files
+work/
+
+# Local databases and biometric data
+*.db
+*.sqlite
+*.sqlite3
+face_data/
+
+# Secrets
+.env

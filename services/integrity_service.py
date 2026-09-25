@@ -1,6 +1,5 @@
-import hashlib
-
 from database import get_connection
+from services.crypto_service import sha256_hex
 
 
 # =========================================================
@@ -72,17 +71,13 @@ def generate_vote_hash(
     creating a tamper-evident chain.
     """
 
-    vote_data = (
-        f"{voter_identity}|"
-        f"{constituency}|"
-        f"{candidate}|"
-        f"{timestamp}|"
-        f"{previous_hash}"
+    return sha256_hex(
+        voter_identity,
+        constituency,
+        candidate,
+        timestamp,
+        previous_hash,
     )
-
-    return hashlib.sha256(
-        vote_data.encode("utf-8")
-    ).hexdigest()
 
 
 # =========================================================

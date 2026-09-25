@@ -1,0 +1,13 @@
+.git
+.github
+.env
+*.db
+*.sqlite
+*.sqlite3
+face_data/
+__pycache__/
+.pytest_cache/
+pytest-cache-files-*/
+work/
+tests/
+*.pyc

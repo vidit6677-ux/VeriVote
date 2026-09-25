@@ -2,7 +2,7 @@ import hashlib
 import hmac
 import secrets
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from config import (
     ADMIN_LEVELS,
@@ -296,7 +296,7 @@ def authenticate_admin(
         failed_attempts=0,
         locked_until=0,
         last_login=(
-            datetime.utcnow()
+            datetime.now(timezone.utc)
             .isoformat(
                 timespec="seconds"
             )

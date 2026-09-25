@@ -1,8 +1,8 @@
 import sqlite3
 
-from config import DATABASE_PATH
+from config import LEVEL_DATABASE_PATHS
 
-from services.sync_service import (
+from services.four_level_sync import (
     get_four_level_security_summary,
 )
 
@@ -16,7 +16,7 @@ def tamper_booth_checkpoint():
     """
 
     connection = sqlite3.connect(
-        DATABASE_PATH
+        LEVEL_DATABASE_PATHS["BOOTH"]
     )
 
     cursor = connection.cursor()
@@ -31,8 +31,7 @@ def tamper_booth_checkpoint():
 
         cursor.execute("""
             SELECT ledger_hash
-            FROM integrity_checkpoints
-            WHERE level = 'BOOTH'
+            FROM level_checkpoint
         """)
 
         row = cursor.fetchone()
@@ -51,9 +50,8 @@ def tamper_booth_checkpoint():
         # =================================================
 
         cursor.execute("""
-            UPDATE integrity_checkpoints
+            UPDATE level_checkpoint
             SET ledger_hash = ?
-            WHERE level = 'BOOTH'
         """, (
             "TAMPERED_DEMO_HASH",
         ))
@@ -97,6 +95,13 @@ def tamper_booth_checkpoint():
             []
         )
 
+        if isinstance(alerts, dict):
+            alerts = [
+                alert
+                for observer_alerts in alerts.values()
+                for alert in observer_alerts
+            ]
+
         if not alerts:
 
             print(
@@ -108,7 +113,7 @@ def tamper_booth_checkpoint():
             for alert in alerts:
 
                 print(
-                    f"- {alert['level']}: "
+                    f"- {alert.get('source_level', 'UNKNOWN')}: "
                     f"{alert['type']} - "
                     f"{alert['message']}"
                 )
@@ -131,14 +136,14 @@ def tamper_booth_checkpoint():
         ):
 
             print(
-                "✓ TEST PASSED: "
+                "TEST PASSED: "
                 "BOOTH tampering was detected."
             )
 
         else:
 
             print(
-                "✗ TEST FAILED: "
+                "TEST FAILED: "
                 "BOOTH tampering was not detected."
             )
 
@@ -151,9 +156,8 @@ def tamper_booth_checkpoint():
         if original_hash is not None:
 
             cursor.execute("""
-                UPDATE integrity_checkpoints
+            UPDATE level_checkpoint
                 SET ledger_hash = ?
-                WHERE level = 'BOOTH'
             """, (
                 original_hash,
             ))

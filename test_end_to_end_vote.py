@@ -174,6 +174,10 @@ try:
         "DELETE FROM voter_audit WHERE voter_identity = ?",
         (TEST_VOTER,)
     )
+    connection.execute(
+        "DELETE FROM replication_outbox WHERE voter_identity = ?",
+        (TEST_VOTER,)
+    )
 
     connection.execute(
         "DELETE FROM voters WHERE identity = ?",

@@ -1,5 +1,3 @@
-import hashlib
-import hmac
 import sqlite3
 from datetime import datetime
 
@@ -12,6 +10,11 @@ from database import get_all_votes
 
 from services.level_database import (
     initialize_all_level_databases,
+)
+from services.crypto_service import (
+    sha256_hex,
+    sign_checkpoint as crypto_sign_checkpoint,
+    verify_checkpoint as crypto_verify_checkpoint,
 )
 
 
@@ -67,17 +70,11 @@ def _get_votes(level):
 
 def _ledger_fingerprint(votes):
 
-    payload = "\n".join(
-        "|".join(
-            str(value)
-            for value in vote
-        )
+    return sha256_hex(*(
+        value
         for vote in votes
-    )
-
-    return hashlib.sha256(
-        payload.encode("utf-8")
-    ).hexdigest()
+        for value in vote
+    ))
 
 
 def get_level_state(level):
@@ -115,28 +112,22 @@ def _build_checkpoint_hash(
     timestamp,
 ):
 
-    payload = (
-        f"{level}|"
-        f"{last_vote_id}|"
-        f"{ledger_hash}|"
-        f"{fingerprint}|"
-        f"{timestamp}"
+    return sha256_hex(
+        level,
+        last_vote_id,
+        ledger_hash,
+        fingerprint,
+        timestamp,
     )
-
-    return hashlib.sha256(
-        payload.encode("utf-8")
-    ).hexdigest()
 
 
 def _sign(level, checkpoint_hash):
 
-    secret = LEVEL_SIGNING_SECRETS[level]
-
-    return hmac.new(
-        secret.encode("utf-8"),
-        checkpoint_hash.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
+    return crypto_sign_checkpoint(
+        level,
+        checkpoint_hash,
+        LEVEL_SIGNING_SECRETS[level],
+    )
 
 
 def _verify_signature(snapshot):
@@ -146,14 +137,11 @@ def _verify_signature(snapshot):
     if level not in LEVEL_SIGNING_SECRETS:
         return False
 
-    expected = _sign(
+    return crypto_verify_checkpoint(
         level,
         snapshot["checkpoint_hash"],
-    )
-
-    return hmac.compare_digest(
-        expected,
         snapshot["signature"],
+        LEVEL_SIGNING_SECRETS[level],
     )
 
 

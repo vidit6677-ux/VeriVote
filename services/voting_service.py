@@ -7,6 +7,9 @@ from database import (
     mark_voted,
     save_vote,
     add_security_event,
+    enqueue_replication,
+    mark_replication_failed,
+    mark_replication_succeeded,
 )
 
 from services.integrity_service import (
@@ -206,6 +209,20 @@ def cast_vote(
             cursor=cursor
         )
 
+        # The local vote and its recovery record share one SQLite
+        # transaction. If the process stops after commit but before the
+        # network-style replication step, Central can still retry this vote.
+        outbox_id = enqueue_replication(
+            vote_id=vote_id,
+            voter_identity=identity,
+            constituency=constituency,
+            candidate=candidate,
+            timestamp=timestamp,
+            previous_hash=previous_hash,
+            vote_hash=vote_hash,
+            cursor=cursor,
+        )
+
         # -------------------------------------------------
         # ATOMIC COMMIT
         # -------------------------------------------------
@@ -294,6 +311,8 @@ def cast_vote(
             "and CENTRAL databases with synchronized checkpoints."
         )
 
+        mark_replication_succeeded(outbox_id)
+
     except Exception as error:
 
         synchronization_ok = False
@@ -309,6 +328,8 @@ def cast_vote(
             severity="HIGH",
             details=synchronization_message,
         )
+
+        mark_replication_failed(outbox_id, synchronization_message)
 
     # =====================================================
     # VOTE REFERENCE

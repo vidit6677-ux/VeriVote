@@ -1,0 +1,19 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = ["work", "face_data", "pytest-cache-files-*"]
+
+[tool.ruff.lint]
+select = ["E", "F", "B"]
+ignore = ["E501"]
+
+[tool.coverage.run]
+branch = true
+source = ["api", "services"]
+
+[tool.coverage.report]
+omit = ["tests/*", "gui/*"]

@@ -1,7 +1,10 @@
 import sqlite3
+import hashlib
+import secrets
 from datetime import datetime
 
 from config import DATABASE_PATH
+from services.crypto_service import sha256_hex
 
 
 # =========================================================
@@ -212,6 +215,47 @@ def initialize_database():
                 timestamp TEXT NOT NULL,
                 acknowledged INTEGER NOT NULL DEFAULT 0,
                 CHECK (acknowledged IN (0, 1))
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS replication_outbox (
+                outbox_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                vote_id INTEGER NOT NULL UNIQUE,
+                voter_identity TEXT NOT NULL,
+                constituency TEXT NOT NULL,
+                candidate TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                previous_hash TEXT NOT NULL,
+                vote_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ballot_issuances (
+                issuance_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                voter_identity TEXT NOT NULL UNIQUE,
+                constituency TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                issued_at TEXT NOT NULL,
+                used_at TEXT DEFAULT ''
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS private_ballots (
+                ballot_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ballot_token_hash TEXT NOT NULL UNIQUE,
+                constituency TEXT NOT NULL,
+                candidate TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                previous_hash TEXT NOT NULL,
+                ballot_hash TEXT NOT NULL
             )
         """)
 
@@ -1055,6 +1099,210 @@ def get_all_checkpoints():
 
 
 # =========================================================
+# REPLICATION OUTBOX
+# =========================================================
+
+def enqueue_replication(
+    vote_id,
+    voter_identity,
+    constituency,
+    candidate,
+    timestamp,
+    previous_hash,
+    vote_hash,
+    error_message="",
+    cursor=None,
+):
+    """Create a durable replication job.
+
+    When a caller supplies a cursor, this insert participates in the caller's
+    transaction.  ``cast_vote`` uses that form so a committed local vote can
+    never exist without a recoverable replication job.
+    """
+    now = datetime.now().isoformat()
+    own_connection = cursor is None
+    connection = None
+
+    if own_connection:
+        connection = get_connection()
+        cursor = connection.cursor()
+
+    try:
+        cursor.execute("""
+            INSERT INTO replication_outbox (
+                vote_id, voter_identity, constituency, candidate,
+                timestamp, previous_hash, vote_hash, status,
+                attempts, last_error, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, ?, ?)
+            ON CONFLICT(vote_id) DO NOTHING
+        """, (
+            vote_id, voter_identity, constituency, candidate,
+            timestamp, previous_hash, vote_hash, error_message, now, now,
+        ))
+
+        outbox_row = cursor.execute("""
+            SELECT outbox_id
+            FROM replication_outbox
+            WHERE vote_id = ?
+        """, (vote_id,)).fetchone()
+
+        if outbox_row is None:
+            raise RuntimeError("Replication outbox entry could not be created.")
+
+        if own_connection:
+            connection.commit()
+
+        return outbox_row[0]
+    except Exception:
+        if own_connection:
+            connection.rollback()
+        raise
+    finally:
+        if own_connection:
+            connection.close()
+
+
+def get_pending_replication(limit=20):
+    connection = get_connection()
+    try:
+        return connection.execute("""
+            SELECT outbox_id, vote_id, voter_identity, constituency,
+                   candidate, timestamp, previous_hash, vote_hash,
+                   attempts, last_error, created_at, updated_at
+            FROM replication_outbox
+            WHERE status = 'PENDING'
+            ORDER BY outbox_id ASC
+            LIMIT ?
+        """, (limit,)).fetchall()
+    finally:
+        connection.close()
+
+
+# =========================================================
+# PRIVACY-AWARE BALLOT TOKEN FLOW
+# =========================================================
+
+def issue_ballot_token(voter_identity, constituency):
+    voter = get_voter(voter_identity)
+    if voter is None:
+        return None, "Voter not found."
+    if not voter["eligible"]:
+        return None, "Voter is not eligible."
+    if voter["has_voted"]:
+        return None, "This voter has already voted."
+    if voter["constituency"] != constituency:
+        return None, "Constituency mismatch."
+
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    now = datetime.now().isoformat()
+    connection = get_connection()
+    try:
+        connection.execute("""
+            INSERT INTO ballot_issuances (
+                voter_identity, constituency, token_hash, issued_at, used_at
+            ) VALUES (?, ?, ?, ?, '')
+        """, (voter_identity, constituency, token_hash, now))
+        connection.commit()
+    except sqlite3.IntegrityError:
+        connection.rollback()
+        return None, "A ballot token has already been issued for this voter."
+    finally:
+        connection.close()
+    return raw_token, "Ballot token issued."
+
+
+def cast_private_ballot(raw_token, candidate):
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        issuance = cursor.execute("""
+            SELECT issuance_id, voter_identity, constituency, used_at
+            FROM ballot_issuances
+            WHERE token_hash = ?
+        """, (token_hash,)).fetchone()
+        if issuance is None:
+            raise ValueError("Invalid ballot token.")
+        issuance_id, voter_identity, constituency, used_at = issuance
+        if used_at:
+            raise ValueError("Ballot token has already been used.")
+        previous = cursor.execute("""
+            SELECT ballot_hash FROM private_ballots
+            ORDER BY ballot_id DESC LIMIT 1
+        """).fetchone()
+        previous_hash = previous[0] if previous else "GENESIS"
+        timestamp = datetime.now().isoformat()
+        ballot_hash = sha256_hex(
+            constituency,
+            candidate,
+            timestamp,
+            previous_hash,
+        )
+        cursor.execute("""
+            INSERT INTO private_ballots (
+                ballot_token_hash, constituency, candidate,
+                timestamp, previous_hash, ballot_hash
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        """, (token_hash, constituency, candidate, timestamp, previous_hash, ballot_hash))
+        cursor.execute("""
+            UPDATE ballot_issuances SET used_at = ? WHERE issuance_id = ?
+        """, (timestamp, issuance_id))
+        cursor.execute("""
+            UPDATE voters SET has_voted = 1 WHERE identity = ? AND has_voted = 0
+        """, (voter_identity,))
+        if cursor.rowcount != 1:
+            raise ValueError("Voter is no longer eligible for this ballot.")
+        connection.commit()
+        return {
+            "success": True,
+            "message": "Private ballot recorded.",
+            "ballot_id": cursor.lastrowid,
+            "ballot_hash": ballot_hash,
+            "constituency": constituency,
+            "candidate": candidate,
+            "timestamp": timestamp,
+        }
+    except ValueError as error:
+        connection.rollback()
+        return {"success": False, "message": str(error)}
+    except Exception:
+        connection.rollback()
+        return {"success": False, "message": "Private ballot could not be recorded safely."}
+    finally:
+        connection.close()
+
+
+def mark_replication_succeeded(outbox_id):
+    connection = get_connection()
+    try:
+        connection.execute("""
+            UPDATE replication_outbox
+            SET status = 'COMPLETED', updated_at = ?
+            WHERE outbox_id = ?
+        """, (datetime.now().isoformat(), outbox_id))
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def mark_replication_failed(outbox_id, error_message):
+    connection = get_connection()
+    try:
+        connection.execute("""
+            UPDATE replication_outbox
+            SET attempts = attempts + 1,
+                last_error = ?,
+                updated_at = ?
+            WHERE outbox_id = ?
+        """, (error_message, datetime.now().isoformat(), outbox_id))
+        connection.commit()
+    finally:
+        connection.close()
+
+
+# =========================================================
 # DEMO RESET
 # =========================================================
 
@@ -1082,6 +1330,18 @@ def reset_demo_voters():
 
         cursor.execute("""
             DELETE FROM integrity_checkpoints
+        """)
+
+        cursor.execute("""
+            DELETE FROM replication_outbox
+        """)
+
+        cursor.execute("""
+            DELETE FROM ballot_issuances
+        """)
+
+        cursor.execute("""
+            DELETE FROM private_ballots
         """)
 
         cursor.execute("""
