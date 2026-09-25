@@ -10,19 +10,59 @@ APP_VERSION = "2.0.0"
 
 
 # =========================================================
-# DATABASE
+# BASE DIRECTORY
 # =========================================================
 
-# Keep the database beside main.py so the project uses
-# one consistent database file.
 BASE_DIR = os.path.dirname(
     os.path.abspath(__file__)
 )
+
+
+# =========================================================
+# DATABASE
+# =========================================================
+#
+# PHASE 5:
+# Keep DATABASE_PATH as the existing database location for
+# backward compatibility while we build and migrate the
+# four independent administrative databases.
+#
+# After migration, database.py will use the BOOTH database
+# as the primary operational database.
+# =========================================================
 
 DATABASE_PATH = os.path.join(
     BASE_DIR,
     "verivote.db"
 )
+
+
+# =========================================================
+# FOUR INDEPENDENT DATABASE PATHS
+# =========================================================
+
+LEVEL_DATABASE_PATHS = {
+
+    "BOOTH": os.path.join(
+        BASE_DIR,
+        "booth.db"
+    ),
+
+    "ZONAL": os.path.join(
+        BASE_DIR,
+        "zonal.db"
+    ),
+
+    "DEPUTY": os.path.join(
+        BASE_DIR,
+        "deputy.db"
+    ),
+
+    "CENTRAL": os.path.join(
+        BASE_DIR,
+        "central.db"
+    ),
+}
 
 
 # =========================================================

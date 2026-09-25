@@ -18,8 +18,8 @@ from services.notification_service import (
     send_vote_confirmation_sms,
 )
 
-from services.sync_service import (
-    synchronize_all_levels,
+from services.four_level_sync import (
+    replicate_vote_to_all_levels,
 )
 
 
@@ -259,13 +259,16 @@ def cast_vote(
         connection.close()
 
     # =====================================================
-    # FOUR-LEVEL SYNCHRONIZATION
+    # FOUR-LEVEL VOTE REPLICATION
     # =====================================================
     #
-    # This happens AFTER the vote transaction has committed.
+    # The operational vote is already committed in verivote.db.
+    # The four independent level databases are then updated in
+    # a separate SQLite transaction across the four files.
     #
-    # The vote must never be rolled back just because a
-    # notification or synchronization operation fails.
+    # A replication failure never rolls back the already-committed
+    # operational vote, but it is surfaced to the caller and
+    # recorded as a security event for investigation.
     #
     # =====================================================
 
@@ -276,14 +279,27 @@ def cast_vote(
 
     try:
 
-        synchronize_all_levels()
+        replicate_vote_to_all_levels(
+            vote_id=vote_id,
+            voter_identity=identity,
+            constituency=constituency,
+            candidate=candidate,
+            timestamp=timestamp,
+            previous_hash=previous_hash,
+            vote_hash=vote_hash,
+        )
+
+        synchronization_message = (
+            "Vote replicated to BOOTH, ZONAL, DEPUTY, "
+            "and CENTRAL databases with synchronized checkpoints."
+        )
 
     except Exception as error:
 
         synchronization_ok = False
 
         synchronization_message = (
-            f"Vote committed, but synchronization "
+            f"Vote committed, but four-level replication "
             f"requires attention: {error}"
         )
 
