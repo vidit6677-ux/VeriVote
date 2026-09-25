@@ -21,10 +21,6 @@ from services.four_level_sync import (
     get_four_level_security_summary,
 )
 
-from services.alert_service import (
-    get_visible_security_alerts,
-    get_unacknowledged_alert_count,
-)
 
 
 # =========================================================
@@ -711,18 +707,33 @@ class BaseAdminDashboard:
 
         try:
 
-            unread_count = (
-                get_unacknowledged_alert_count(
-                    self.role
-                )
-            )
+            alerts = []
 
-            alerts = (
-                get_visible_security_alerts(
-                    self.role,
-                    limit=8
-                )
-            )
+            for observer, observer_alerts in (
+                summary.get("alerts", {}).items()
+            ):
+
+                for alert in observer_alerts:
+
+                    alerts.append({
+                        "source_level": (
+                            f"{observer} observes "
+                            f"{alert.get('source_level', observer)}"
+                        ),
+                        "event_type": alert.get(
+                            "type",
+                            "SECURITY_ALERT"
+                        ),
+                        "severity": "HIGH",
+                        "details": alert.get(
+                            "message",
+                            "Security verification alert."
+                        ),
+                        "timestamp": "Current verification",
+                    })
+
+            alerts = alerts[:8]
+            unread_count = len(alerts)
 
         except Exception:
 
@@ -893,11 +904,32 @@ class BaseAdminDashboard:
                 get_four_level_security_summary()
             )
 
-            alerts = (
-                get_visible_security_alerts(
-                    self.role
-                )
-            )
+            alerts = []
+
+            for observer, observer_alerts in (
+                sync_summary.get("alerts", {}).items()
+            ):
+
+                for alert in observer_alerts:
+
+                    alerts.append({
+                        "source_level": (
+                            f"{observer} observes "
+                            f"{alert.get('source_level', observer)}"
+                        ),
+                        "event_type": alert.get(
+                            "type",
+                            "SECURITY_ALERT"
+                        ),
+                        "severity": "HIGH",
+                        "details": alert.get(
+                            "message",
+                            "Security verification alert."
+                        ),
+                        "timestamp": "Current verification",
+                    })
+
+            alerts = alerts[:8]
 
         except Exception as error:
 
