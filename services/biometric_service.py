@@ -45,7 +45,7 @@ CAMERA_INDEX = 0
 #
 # This is only for our college-project prototype.
 #
-FACE_THRESHOLD = 80.0
+FACE_THRESHOLD = 100.0
 
 
 # =========================================================
@@ -455,8 +455,6 @@ def verify_face_from_camera(identity):
                 minSize=(100, 100)
             )
 
-            status = "ALIGN YOUR FACE"
-
             status_color = (
                 0,
                 180,
@@ -514,10 +512,6 @@ def verify_face_from_camera(identity):
 
                     consecutive_matches += 1
 
-                    status = (
-                        "FACE MATCHED"
-                    )
-
                     status_color = (
                         0,
                         220,
@@ -527,10 +521,6 @@ def verify_face_from_camera(identity):
                 else:
 
                     consecutive_matches = 0
-
-                    status = (
-                        "FACE DOES NOT MATCH"
-                    )
 
                     status_color = (
                         0,

@@ -824,7 +824,7 @@ def replicate_vote_to_all_levels(
         # INSERT THE VOTE INTO ALL FOUR LEVEL DATABASES
         # -------------------------------------------------
 
-        for level, alias in aliases.items():
+        for _level, alias in aliases.items():
 
             _assert_known_alias(alias)
 
@@ -936,7 +936,7 @@ def replicate_vote_to_all_levels(
         # UPDATE PEER OBSERVATIONS
         # -------------------------------------------------
 
-        for observer, observer_alias in aliases.items():
+        for _observer, observer_alias in aliases.items():
 
             for peer in LEVELS:
 

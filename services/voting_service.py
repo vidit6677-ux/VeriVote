@@ -124,7 +124,6 @@ def cast_vote(
             )
 
         identity = current_voter[0]
-        name = current_voter[1]
         voter_constituency = current_voter[2]
         eligible = bool(current_voter[3])
         has_voted = bool(current_voter[4])

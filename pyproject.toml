@@ -9,7 +9,16 @@ exclude = ["work", "face_data", "pytest-cache-files-*"]
 
 [tool.ruff.lint]
 select = ["E", "F", "B"]
-ignore = ["E501"]
+ignore = [
+    "E501",
+    # B008: FastAPI's dependency-injection pattern requires calling
+    # Depends(...) (and the callables passed to it, e.g. require_roles())
+    # directly in argument defaults — that's how FastAPI resolves and
+    # caches dependencies per-request. Rewriting this per bugbear's
+    # suggestion would break authentication/authorization on every
+    # protected endpoint in api/main.py and api/security.py.
+    "B008",
+]
 
 [tool.coverage.run]
 branch = true
