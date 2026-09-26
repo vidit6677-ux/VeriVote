@@ -37,7 +37,7 @@ def issue_token(username: str, role: str) -> dict:
     }
     return {
         "access_token": jwt.encode(payload, _RUNTIME_SECRET, algorithm=ALGORITHM),
-        "token_type": "bearer",
+        "token_type": "bearer",  # nosec B105 -- OAuth token_type field, not a credential
         "expires_in": int((expires - now).total_seconds()),
         "role": role,
     }

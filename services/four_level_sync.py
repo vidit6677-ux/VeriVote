@@ -25,6 +25,36 @@ LEVELS = (
     "CENTRAL",
 )
 
+# Fixed SQLite ATTACH aliases for the four level databases. This is the
+# single source of truth for alias strings used in dynamic SQL identifier
+# interpolation below (SELECT/UPDATE/INSERT ... FROM/INTO {alias}.table).
+# These values are hardcoded here, are never read from user input, request
+# data, config files, or the network, and cannot be influenced by a voter
+# or any external caller. Bandit's B608 check cannot statically verify
+# this, so call sites that interpolate a value drawn from this mapping are
+# marked "# nosec B608" with a comment pointing back here.
+SQLITE_ALIASES = {
+    "BOOTH": "main",
+    "ZONAL": "db_zonal",
+    "DEPUTY": "db_deputy",
+    "CENTRAL": "db_central",
+}
+
+
+def _assert_known_alias(alias):
+    """
+    Defense-in-depth guard for the dynamic SQL identifiers used in this
+    module. Every f-string that interpolates a SQLite alias into a query
+    is preceded by a call to this function. It does not change what
+    Bandit reports (B608 is a static, string-pattern check and cannot
+    see this guard), but it ensures that if a future change ever passes
+    something other than one of the four fixed aliases, the code fails
+    loudly here instead of executing an unexpected identifier.
+    """
+
+    if alias not in SQLITE_ALIASES.values():
+        raise ValueError(f"Refusing to use unrecognized SQL alias: {alias!r}")
+
 
 # =========================================================
 # CONNECTION / STATE
@@ -707,12 +737,7 @@ def replicate_vote_to_all_levels(
         str(vote_hash),
     )
 
-    aliases = {
-        "BOOTH": "main",
-        "ZONAL": "db_zonal",
-        "DEPUTY": "db_deputy",
-        "CENTRAL": "db_central",
-    }
+    aliases = SQLITE_ALIASES
 
     connection = sqlite3.connect(
         LEVEL_DATABASE_PATHS["BOOTH"],
@@ -743,6 +768,12 @@ def replicate_vote_to_all_levels(
 
         for level, alias in aliases.items():
 
+            _assert_known_alias(alias)
+
+            # `alias` is drawn only from the fixed SQLITE_ALIASES mapping
+            # (see module-level definition above) and is guarded just
+            # above by _assert_known_alias(); vote_id is passed as a
+            # parameterized value below, not interpolated.
             existing = connection.execute(
                 f"""
                 SELECT
@@ -755,7 +786,7 @@ def replicate_vote_to_all_levels(
                     vote_hash
                 FROM {alias}.votes
                 WHERE vote_id = ?
-                """,
+                """,  # nosec B608
                 (vote_id,),
             ).fetchone()
 
@@ -770,13 +801,15 @@ def replicate_vote_to_all_levels(
 
                 continue
 
+            # `alias` from fixed SQLITE_ALIASES mapping, guarded above by
+            # _assert_known_alias(); voter_identity is parameterized.
             duplicate_voter = connection.execute(
                 f"""
                 SELECT vote_id
                 FROM {alias}.votes
                 WHERE voter_identity = ?
                 LIMIT 1
-                """,
+                """,  # nosec B608
                 (voter_identity,),
             ).fetchone()
 
@@ -792,6 +825,8 @@ def replicate_vote_to_all_levels(
         # -------------------------------------------------
 
         for level, alias in aliases.items():
+
+            _assert_known_alias(alias)
 
             connection.execute(
                 f"""
@@ -817,6 +852,10 @@ def replicate_vote_to_all_levels(
 
         for level, alias in aliases.items():
 
+            _assert_known_alias(alias)
+
+            # `alias` from fixed SQLITE_ALIASES mapping, guarded above by
+            # _assert_known_alias(); no user-supplied values appear here.
             rows = connection.execute(
                 f"""
                 SELECT
@@ -829,7 +868,7 @@ def replicate_vote_to_all_levels(
                     vote_hash
                 FROM {alias}.votes
                 ORDER BY vote_id ASC
-                """
+                """  # nosec B608
             ).fetchall()
 
             state = _state_from_votes(rows)
@@ -865,6 +904,10 @@ def replicate_vote_to_all_levels(
 
             snapshot = snapshots[level]
 
+            _assert_known_alias(alias)
+
+            # `alias` from fixed SQLITE_ALIASES mapping, guarded above by
+            # _assert_known_alias(); SET/WHERE values are parameterized.
             connection.execute(
                 f"""
                 UPDATE {alias}.level_checkpoint
@@ -877,7 +920,7 @@ def replicate_vote_to_all_levels(
                     signature = ?,
                     updated_at = ?
                 WHERE id = 1
-                """,
+                """,  # nosec B608
                 (
                     level,
                     snapshot["last_vote_id"],
@@ -899,6 +942,11 @@ def replicate_vote_to_all_levels(
 
                 snapshot = snapshots[peer]
 
+                _assert_known_alias(observer_alias)
+
+                # `observer_alias` from fixed SQLITE_ALIASES mapping (via
+                # aliases.items()), guarded above by _assert_known_alias();
+                # all row values are parameterized below.
                 connection.execute(
                     f"""
                     INSERT INTO {observer_alias}.peer_checkpoints (
@@ -918,7 +966,7 @@ def replicate_vote_to_all_levels(
                         checkpoint_hash = excluded.checkpoint_hash,
                         signature = excluded.signature,
                         observed_at = excluded.observed_at
-                    """,
+                    """,  # nosec B608
                     (
                         snapshot["level"],
                         snapshot["last_vote_id"],
