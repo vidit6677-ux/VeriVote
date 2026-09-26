@@ -5,13 +5,14 @@ from api.main import app
 from database import add_demo_voter, get_connection, initialize_database
 from data.demo_voters import load_demo_voters
 from services.admin_security import seed_demo_admin_accounts
+from services.level_database import initialize_all_level_databases
 
 
 client = TestClient(app)
 initialize_database()
+initialize_all_level_databases()
 seed_demo_admin_accounts()
 load_demo_voters()
-
 
 def token(username="booth01", password="Booth@2026", role="BOOTH"):
     response = client.post(
