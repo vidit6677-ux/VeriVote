@@ -45,7 +45,11 @@ CAMERA_INDEX = 0
 #
 # This is only for our college-project prototype.
 #
-FACE_THRESHOLD = 100.0
+# With one enrolled image per demo identity, a permissive threshold lets a
+# different face at an angle look close enough. Keep this deliberately strict
+# until enrollment stores multiple pose samples per identity.
+FACE_THRESHOLD = 65.0
+MAX_AVERAGE_DISTANCE = 55.0
 
 
 # =========================================================
@@ -178,6 +182,35 @@ def get_reference_images(identity):
     return files
 
 
+def get_registered_identities():
+
+    """Return identities that have at least one reference image."""
+
+    if not os.path.isdir(FACE_DATA_DIR):
+
+        return []
+
+    identities = set()
+
+    for filename in os.listdir(FACE_DATA_DIR):
+
+        path = os.path.join(FACE_DATA_DIR, filename)
+
+        if os.path.isfile(path):
+
+            identity, extension = os.path.splitext(filename)
+
+            if extension.lower() in (".jpg", ".jpeg", ".png"):
+
+                identities.add(identity)
+
+        elif os.path.isdir(path) and get_reference_images(filename):
+
+            identities.add(filename)
+
+    return sorted(identities)
+
+
 # =========================================================
 # EXTRACT FACE
 # =========================================================
@@ -233,9 +266,9 @@ def extract_face(image):
 
 def build_model(identity):
 
-    reference_files = get_reference_images(
-        identity
-    )
+    identity = str(identity)
+
+    reference_files = get_reference_images(identity)
 
     # -----------------------------------------------------
     # NO REFERENCE IMAGE
@@ -251,30 +284,46 @@ def build_model(identity):
         )
 
     training_faces = []
+    labels = []
+    label_to_identity = {}
+
+    registered_identities = get_registered_identities()
+
+    # A recognizer trained only on the requested identity cannot establish
+    # identity. It merely measures similarity to that one person's images.
+    if len(registered_identities) < 2:
+
+        return None, (
+            "Face verification is unavailable until at least two "
+            "identities have registered face references."
+        )
 
     # -----------------------------------------------------
     # LOAD REFERENCE IMAGES
     # -----------------------------------------------------
 
-    for file_path in reference_files:
+    for label, registered_identity in enumerate(registered_identities, start=1):
 
-        image = cv2.imread(
-            file_path
-        )
+        label_to_identity[label] = registered_identity
 
-        if image is None:
+        for file_path in get_reference_images(registered_identity):
 
-            continue
-
-        face = extract_face(
-            image
-        )
-
-        if face is not None:
-
-            training_faces.append(
-                face
+            image = cv2.imread(
+                file_path
             )
+
+            if image is None:
+
+                continue
+
+            face = extract_face(
+                image
+            )
+
+            if face is not None:
+
+                training_faces.append(face)
+                labels.append(label)
 
     # -----------------------------------------------------
     # NO FACE DETECTED
@@ -308,10 +357,7 @@ def build_model(identity):
     #
     # OpenCV 5 expects labels as a NumPy array.
     #
-    labels = np.array(
-        [1] * len(training_faces),
-        dtype=np.int32
-    )
+    labels = np.array(labels, dtype=np.int32)
 
     # Make sure training images are also
     # proper NumPy arrays.
@@ -329,7 +375,17 @@ def build_model(identity):
         labels
     )
 
-    return recognizer, None
+    return (recognizer, label_to_identity), None
+
+
+def is_face_match(expected_identity, predicted_identity, distance):
+
+    """Require both a close match and the expected identity label."""
+
+    return (
+        str(predicted_identity) == str(expected_identity)
+        and distance <= FACE_THRESHOLD
+    )
 
 
 # =========================================================
@@ -368,16 +424,18 @@ def verify_face_from_camera(identity):
     # BUILD MODEL
     # -----------------------------------------------------
 
-    recognizer, error = build_model(
+    model, error = build_model(
         identity
     )
 
-    if recognizer is None:
+    if model is None:
 
         return {
             "success": False,
             "message": error
         }
+
+    recognizer, label_to_identity = model
 
     # -----------------------------------------------------
     # OPEN CAMERA
@@ -406,6 +464,7 @@ def verify_face_from_camera(identity):
     best_distance = None
 
     consecutive_matches = 0
+    match_distances = []
 
     REQUIRED_MATCHES = 8
 
@@ -461,10 +520,24 @@ def verify_face_from_camera(identity):
                 255
             )
 
-            # No face
-            if len(faces) == 0:
+            # A verification session must contain exactly one face. This
+            # prevents an unrelated face in the frame from being accepted.
+            if len(faces) != 1:
 
                 consecutive_matches = 0
+                match_distances = []
+
+                if len(faces) > 1:
+
+                    cv2.putText(
+                        display,
+                        "Only one face may be visible",
+                        (20, 125),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 0, 255),
+                        2
+                    )
 
             # -------------------------------------------------
             # PROCESS FACES
@@ -496,6 +569,8 @@ def verify_face_from_camera(identity):
                     )
                 )
 
+                predicted_identity = label_to_identity.get(label)
+
                 # Track best distance
                 if (
                     best_distance is None
@@ -508,9 +583,14 @@ def verify_face_from_camera(identity):
                 # MATCH
                 # -------------------------------------------------
 
-                if distance <= FACE_THRESHOLD:
+                if is_face_match(
+                    identity,
+                    predicted_identity,
+                    distance
+                ):
 
                     consecutive_matches += 1
+                    match_distances.append(distance)
 
                     status_color = (
                         0,
@@ -521,6 +601,7 @@ def verify_face_from_camera(identity):
                 else:
 
                     consecutive_matches = 0
+                    match_distances = []
 
                     status_color = (
                         0,
@@ -640,6 +721,8 @@ def verify_face_from_camera(identity):
             if (
                 consecutive_matches
                 >= REQUIRED_MATCHES
+                and sum(match_distances) / len(match_distances)
+                <= MAX_AVERAGE_DISTANCE
             ):
 
                 cv2.waitKey(

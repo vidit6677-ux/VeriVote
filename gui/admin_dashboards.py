@@ -788,7 +788,7 @@ class BaseAdminDashboard:
 
             tk.Label(
                 empty,
-                text="âœ“ No visible security alerts",
+                text="[OK] No visible security alerts",
                 font=("Arial", 9, "bold"),
                 fg=self.green,
                 bg="#ECFDF3",
@@ -834,7 +834,7 @@ class BaseAdminDashboard:
             )
 
             title = (
-                f"{alert['source_level']}  â€¢  "
+                f"{alert['source_level']}  ->  "
                 f"{alert['event_type']}"
             )
 
@@ -950,24 +950,24 @@ class BaseAdminDashboard:
         )
 
         ledger_message = (
-            "âœ“ Ledger integrity verified."
+            "[OK] Ledger integrity verified."
             if integrity_ok
             else
-            "âš  Ledger integrity check failed."
+            "[WARN] Ledger integrity check failed."
         )
 
         sync_message = (
-            "âœ“ Four-level synchronization is valid."
+            "[OK] Four-level synchronization is valid."
             if overall == "SECURE"
             else
-            f"âš  Four-level status: {overall}"
+            f"[WARN] Four-level status: {overall}"
         )
 
         alert_message = (
-            "âœ“ No visible security alerts."
+            "[OK] No visible security alerts."
             if alert_count == 0
             else
-            f"âš  {alert_count} visible security alert(s)."
+            f"[WARN] {alert_count} visible security alert(s)."
         )
 
         if (
